@@ -2,11 +2,12 @@
 
 <#
 .SYNOPSIS
-    Uninstalls Claude AI desktop via winget.
+    Updates Google Chrome to the latest version via winget.
 
 .DESCRIPTION
-    Detects Claude (registry uninstall keys + winget). If present, prompts to
-    confirm and then runs winget uninstall. If absent, exits cleanly.
+    Checks the installed and latest-available versions via winget. If an update
+    is available, runs winget upgrade. If the app is not installed, or already
+    up to date, it exits without action.
 
 .NOTES
     Part of MSP Application Installation Tool.
@@ -15,14 +16,14 @@
 
 $ErrorActionPreference = 'Stop'
 
-$AppName     = 'Claude AI'
-$WingetId    = 'Anthropic.Claude'
+$AppName  = 'Google Chrome'
+$WingetId = 'Google.Chrome'
 
 $AITDir = Join-Path $env:USERPROFILE 'AppData\Local\Temp\AIT'
 if (-not (Test-Path $AITDir)) {
     New-Item -ItemType Directory -Path $AITDir -Force | Out-Null
 }
-$LogFile = Join-Path $AITDir ("Uninstall-ClaudeAI_{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
+$LogFile = Join-Path $AITDir ("Upgrade-GoogleChrome_{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
 try { Start-Transcript -Path $LogFile -Force | Out-Null } catch { }
 
 function Write-Header {
@@ -38,8 +39,8 @@ function Test-WingetAvailable {
 }
 
 function Get-AppInstallState {
-    # Detection is winget-only - no registry checks.
-    $state = [PSCustomObject]@{ Installed = $false; Version = $null; Source = $null }
+    # winget-only: Installed, Version (installed), Available (newer), Source
+    $state = [PSCustomObject]@{ Installed = $false; Version = $null; Available = $null; Source = $null }
 
     if (Test-WingetAvailable) {
         try {
@@ -47,12 +48,16 @@ function Get-AppInstallState {
             if ($LASTEXITCODE -eq 0) {
                 $line = $out | Where-Object { $_ -match [regex]::Escape($WingetId) } | Select-Object -First 1
                 if ($line) {
-                    $idx  = $line.IndexOf($WingetId)
-                    $rest = $line.Substring($idx + $WingetId.Length).Trim()
-                    $ver  = ($rest -split '\s+' | Select-Object -First 1)
+                    $idx    = $line.IndexOf($WingetId)
+                    $rest   = $line.Substring($idx + $WingetId.Length).Trim()
+                    $tokens = $rest -split '\s+'
+                    $ver    = $tokens[0]
                     if ($ver -notmatch '^[\d]') { $ver = $null }
+                    $avail = $null
+                    if ($tokens.Count -ge 2 -and $tokens[1] -match '^[\d]') { $avail = $tokens[1] }
                     $state.Installed = $true
                     $state.Version   = $ver
+                    $state.Available = $avail
                     $state.Source    = 'winget'
                 }
             }
@@ -62,7 +67,7 @@ function Get-AppInstallState {
     return $state
 }
 
-Write-Header "Uninstall: $AppName"
+Write-Header "Update: $AppName"
 Write-Host "Log file: $LogFile" -ForegroundColor DarkGray
 
 if (-not (Test-WingetAvailable)) {
@@ -78,34 +83,34 @@ $state = Get-AppInstallState
 
 if (-not $state.Installed) {
     Write-Host ''
-    Write-Host "$AppName is not installed. Nothing to do." -ForegroundColor Yellow
+    Write-Host "$AppName is not installed. Use the Install module first." -ForegroundColor Yellow
+    try { Stop-Transcript | Out-Null } catch { }
+    Read-Host "`nPress Enter to close"
+    exit 0
+}
+
+if (-not $state.Available) {
+    Write-Host ''
+    Write-Host "$AppName is already up to date." -ForegroundColor Green
+    if ($state.Version) { Write-Host "  Installed version: $($state.Version)" -ForegroundColor Gray }
     try { Stop-Transcript | Out-Null } catch { }
     Read-Host "`nPress Enter to close"
     exit 0
 }
 
 Write-Host ''
-Write-Host "$AppName is currently installed." -ForegroundColor Green
-if ($state.Version) { Write-Host "  Version : $($state.Version)" -ForegroundColor Gray }
-Write-Host "  Source  : $($state.Source)" -ForegroundColor Gray
+Write-Host "$AppName update available." -ForegroundColor Cyan
+Write-Host "  Installed : $($state.Version)" -ForegroundColor Gray
+Write-Host "  Available : $($state.Available)" -ForegroundColor Gray
 Write-Host ''
-
-$confirm = Read-Host "Proceed with uninstall? (Y/N)"
-if ($confirm -notmatch '^(?i)y(es)?$') {
-    Write-Host "Cancelled. No changes made." -ForegroundColor Yellow
-    try { Stop-Transcript | Out-Null } catch { }
-    Read-Host "`nPress Enter to close"
-    exit 0
-}
-
-Write-Host ''
-Write-Host "Uninstalling $AppName via winget ..." -ForegroundColor Cyan
+Write-Host "Updating $AppName via winget ..." -ForegroundColor Cyan
 
 $wingetArgs = @(
-    'uninstall',
+    'upgrade',
     '--id', $WingetId,
     '-e',
     '--accept-source-agreements',
+    '--accept-package-agreements',
     '--silent'
 )
 
@@ -115,12 +120,8 @@ $code = $LASTEXITCODE
 Write-Host ''
 if ($code -eq 0) {
     $after = Get-AppInstallState
-    if ($after.Installed) {
-        Write-Host "winget reported success but $AppName still appears to be present." -ForegroundColor Yellow
-        Write-Host "It may require an additional reboot, or per-user copies may remain on other profiles." -ForegroundColor Yellow
-    } else {
-        Write-Host "Uninstall completed." -ForegroundColor Green
-    }
+    Write-Host "Update completed." -ForegroundColor Green
+    if ($after.Version) { Write-Host "  Installed version: $($after.Version)" -ForegroundColor Gray }
 } else {
     Write-Host "winget exited with code $code." -ForegroundColor Red
     Write-Host "Review the output above for the cause." -ForegroundColor Yellow

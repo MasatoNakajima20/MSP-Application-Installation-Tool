@@ -24,7 +24,7 @@ Add-Type -AssemblyName System.Drawing
 $script:RepoOwner  = 'MasatoNakajima20'
 $script:RepoName   = 'MSP-Application-Installation-Tool'
 $script:Branch     = 'main'
-$script:Version    = '0.1.0-beta'
+$script:Version    = '0.2.0-beta'
 $script:BaseRawUrl = "https://raw.githubusercontent.com/$script:RepoOwner/$script:RepoName/$script:Branch"
 $script:WorkDir    = Join-Path $env:USERPROFILE 'AppData\Local\Temp\AIT'
 
@@ -37,7 +37,7 @@ $script:Apps = @(
         Description    = "Google's web browser. Silent install via winget."
         InstallModule  = 'Modules/Install-GoogleChrome.ps1'
         UninstallModule= 'Modules/Uninstall-GoogleChrome.ps1'
-        DetectNameLike = 'Google Chrome*'
+        UpgradeModule  = 'Modules/Upgrade-GoogleChrome.ps1'
     }
     [PSCustomObject]@{
         Name           = 'Microsoft Teams'
@@ -46,7 +46,7 @@ $script:Apps = @(
         Description    = "Microsoft Teams desktop client. Silent install via winget."
         InstallModule  = 'Modules/Install-MicrosoftTeams.ps1'
         UninstallModule= 'Modules/Uninstall-MicrosoftTeams.ps1'
-        DetectNameLike = 'Microsoft Teams*'
+        UpgradeModule  = 'Modules/Upgrade-MicrosoftTeams.ps1'
     }
     [PSCustomObject]@{
         Name           = 'Claude AI'
@@ -55,7 +55,7 @@ $script:Apps = @(
         Description    = "Anthropic's Claude desktop app. Silent install via winget."
         InstallModule  = 'Modules/Install-ClaudeAI.ps1'
         UninstallModule= 'Modules/Uninstall-ClaudeAI.ps1'
-        DetectNameLike = 'Claude*'
+        UpgradeModule  = 'Modules/Upgrade-ClaudeAI.ps1'
     }
     [PSCustomObject]@{
         Name           = 'Adobe Acrobat Reader'
@@ -64,7 +64,7 @@ $script:Apps = @(
         Description    = "Adobe Acrobat Reader (64-bit). Silent install via winget."
         InstallModule  = 'Modules/Install-AdobeReader.ps1'
         UninstallModule= 'Modules/Uninstall-AdobeReader.ps1'
-        DetectNameLike = 'Adobe Acrobat*'
+        UpgradeModule  = 'Modules/Upgrade-AdobeReader.ps1'
     }
 )
 
@@ -97,22 +97,33 @@ function Get-WingetVersion {
 }
 
 function Test-AppInstalled {
-    param([string]$DisplayNameLike, [string]$WingetId)
+    param([string]$WingetId)
 
-    $uninstallPaths = @(
-        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
-    )
-    foreach ($p in $uninstallPaths) {
-        $hit = Get-ItemProperty -Path $p -ErrorAction SilentlyContinue |
-               Where-Object { $_.DisplayName -like $DisplayNameLike } |
-               Select-Object -First 1
-        if ($hit) {
-            return [PSCustomObject]@{ Installed = $true; Version = $hit.DisplayVersion }
-        }
+    # Detection is winget-only - no registry checks. Catches every install type
+    # winget tracks, including Squirrel / MSIX apps (e.g. Claude) that write no
+    # classic uninstall key.
+    if ($WingetId -and (Test-WingetAvailable)) {
+        try {
+            $out = winget list --id $WingetId -e --accept-source-agreements 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $line = $out | Where-Object { $_ -match [regex]::Escape($WingetId) } | Select-Object -First 1
+                if ($line) {
+                    # Tokens after the package ID are: <installed> [<available>] <source>.
+                    # The available version is present only when an upgrade exists.
+                    $idx    = $line.IndexOf($WingetId)
+                    $rest   = $line.Substring($idx + $WingetId.Length).Trim()
+                    $tokens = $rest -split '\s+'
+                    $ver    = $tokens[0]
+                    if ($ver -notmatch '^[\d]') { $ver = $null }
+                    $avail = $null
+                    if ($tokens.Count -ge 2 -and $tokens[1] -match '^[\d]') { $avail = $tokens[1] }
+                    return [PSCustomObject]@{ Installed = $true; Version = $ver; Available = $avail }
+                }
+            }
+        } catch { }
     }
-    return [PSCustomObject]@{ Installed = $false; Version = $null }
+
+    return [PSCustomObject]@{ Installed = $false; Version = $null; Available = $null }
 }
 
 function Invoke-RemoteModule {
@@ -346,7 +357,7 @@ $form.Controls.Add($list)
 function New-AppCard {
     param ([PSCustomObject]$App, [System.Windows.Forms.Label]$StatusLabel)
 
-    $state = Test-AppInstalled -DisplayNameLike $App.DetectNameLike -WingetId $App.WingetId
+    $state = Test-AppInstalled -WingetId $App.WingetId
 
     $card             = New-Object System.Windows.Forms.Panel
     $card.Size        = New-Object System.Drawing.Size(1040, 92)
@@ -377,9 +388,20 @@ function New-AppCard {
     $verLbl.Font      = New-Object System.Drawing.Font('Segoe UI', 8)
     $verLbl.ForeColor = $BrandTextMuted
     $verLbl.Location  = New-Object System.Drawing.Point(128, 10)
-    $verLbl.Size      = New-Object System.Drawing.Size(180, 18)
+    $verLbl.Size      = New-Object System.Drawing.Size(120, 18)
     $verLbl.BackColor = [System.Drawing.Color]::Transparent
     $card.Controls.Add($verLbl)
+
+    # Update-available notice (shown only when winget reports a newer version)
+    $updateAvailable  = [bool]($state.Installed -and $state.Available)
+    $updLbl           = New-Object System.Windows.Forms.Label
+    $updLbl.Text      = if ($updateAvailable) { "Update Available v$($state.Available)" } else { '' }
+    $updLbl.Font      = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+    $updLbl.ForeColor = $BrandBlueDark
+    $updLbl.Location  = New-Object System.Drawing.Point(250, 10)
+    $updLbl.Size      = New-Object System.Drawing.Size(260, 18)
+    $updLbl.BackColor = [System.Drawing.Color]::Transparent
+    $card.Controls.Add($updLbl)
 
     $titleLbl2          = New-Object System.Windows.Forms.Label
     $titleLbl2.Text     = "$($App.Name)"
@@ -399,8 +421,26 @@ function New-AppCard {
     $descLbl.BackColor= [System.Drawing.Color]::Transparent
     $card.Controls.Add($descLbl)
 
-    # Action button - Install and Uninstall occupy the same spot; only one shows
-    # based on current install state (Install when absent, Uninstall when present).
+    # Action buttons. Install and Uninstall share the rightmost slot (only one
+    # shows, by install state). The Update button sits to its left and appears
+    # only when winget reports a newer version is available.
+
+    # Update button (visible only when an update is available)
+    $updateBtn           = New-Object System.Windows.Forms.Button
+    $updateBtn.Text      = 'Update'
+    $updateBtn.Size      = New-Object System.Drawing.Size(140, 36)
+    $updateBtn.Location  = New-Object System.Drawing.Point(745, 28)
+    $updateBtn.BackColor = $BrandBlueDark
+    $updateBtn.ForeColor = [System.Drawing.Color]::White
+    $updateBtn.FlatStyle = 'Flat'
+    $updateBtn.FlatAppearance.BorderSize = 0
+    $updateBtn.Font      = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+    $updateBtn.Cursor    = [System.Windows.Forms.Cursors]::Hand
+    $updateBtn.Visible   = $updateAvailable
+    $localUpgradeFile     = $App.UpgradeModule
+    $localStatusUp        = $StatusLabel
+    $updateBtn.Add_Click({ Invoke-RemoteModule -ModuleFile $localUpgradeFile -StatusLabel $localStatusUp }.GetNewClosure())
+    $card.Controls.Add($updateBtn)
 
     # Install button (visible only when NOT installed)
     $installBtn           = New-Object System.Windows.Forms.Button

@@ -41,35 +41,23 @@ function Test-WingetAvailable {
 }
 
 function Get-ChromeInstallState {
-    # Returns @{ Installed = $bool; Version = $string; Source = $string }
+    # Detection is winget-only - no registry checks.
     $state = [PSCustomObject]@{ Installed = $false; Version = $null; Source = $null }
 
-    # 1) Registry uninstall keys (machine + user)
-    $uninstallPaths = @(
-        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
-    )
-    foreach ($p in $uninstallPaths) {
-        $hit = Get-ItemProperty -Path $p -ErrorAction SilentlyContinue |
-               Where-Object { $_.DisplayName -like 'Google Chrome*' } |
-               Select-Object -First 1
-        if ($hit) {
-            $state.Installed = $true
-            $state.Version   = $hit.DisplayVersion
-            $state.Source    = 'Registry'
-            return $state
-        }
-    }
-
-    # 2) winget fallback
     if (Test-WingetAvailable) {
         try {
             $out = winget list --id $WingetId -e --accept-source-agreements 2>$null
-            if ($LASTEXITCODE -eq 0 -and ($out -match $WingetId)) {
-                $state.Installed = $true
-                $state.Source    = 'winget'
-                return $state
+            if ($LASTEXITCODE -eq 0) {
+                $line = $out | Where-Object { $_ -match [regex]::Escape($WingetId) } | Select-Object -First 1
+                if ($line) {
+                    $idx  = $line.IndexOf($WingetId)
+                    $rest = $line.Substring($idx + $WingetId.Length).Trim()
+                    $ver  = ($rest -split '\s+' | Select-Object -First 1)
+                    if ($ver -notmatch '^[\d]') { $ver = $null }
+                    $state.Installed = $true
+                    $state.Version   = $ver
+                    $state.Source    = 'winget'
+                }
             }
         } catch { }
     }
