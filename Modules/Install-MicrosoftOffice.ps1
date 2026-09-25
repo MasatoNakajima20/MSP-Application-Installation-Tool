@@ -2,10 +2,11 @@
 
 <#
 .SYNOPSIS
-    Updates Claude AI to the latest version via winget.
+    Installs Microsoft Office via winget.
 .DESCRIPTION
-    Compares installed and latest-available versions via winget. If an update is
-    available, runs winget upgrade. Exits cleanly if not installed or up to date.
+    Detects current state via winget (no registry checks). If Microsoft Office is not
+    installed, installs Microsoft.Office in machine scope when elevated, else user scope.
+    Note: Office (Microsoft 365 Apps) is Click-to-Run and self-manages updates; winget may report no update even when Office updates via its own channel. Installing or removing Office requires administrator rights.
 .NOTES
     Part of MSP Application Installation Tool.
     Repo: https://github.com/MasatoNakajima20/MSP-Application-Installation-Tool
@@ -16,9 +17,9 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------------------------
-$AppName  = 'Claude AI'
-$WingetId = 'Anthropic.Claude'
-$TaskName = 'Upgrade-ClaudeAI'
+$AppName  = 'Microsoft Office'
+$WingetId = 'Microsoft.Office'
+$TaskName = 'Install-MicrosoftOffice'
 
 $LogDir = 'C:\Logging\MSP Application Installation Tool'
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
@@ -104,23 +105,23 @@ if (-not (Test-WingetAvailable)) {
 Write-Log INFO "Checking current install state ..."
 $state = Get-AppInstallState
 
-if (-not $state.Installed) {
-    Write-Log WARN "$AppName is not installed. Use the Install module first."
+if ($state.Installed) {
+    Write-Log INFO "$AppName is already installed (version: $($state.Version))."
+    Write-Log INFO "Nothing to do. To remove it, run the Uninstall $AppName module."
     Read-Host "`nPress Enter to close"
     exit 0
 }
 
-if (-not $state.Available) {
-    Write-Log INFO "$AppName is already up to date (version: $($state.Version))."
-    Read-Host "`nPress Enter to close"
-    exit 0
-}
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+$scope = if ($isAdmin) { 'machine' } else { 'user' }
+Write-Log INFO "Installing $AppName via winget (scope: $scope) ..."
 
-Write-Log INFO "Update available: $($state.Version) -> $($state.Available). Upgrading $AppName via winget ..."
 $wingetArgs = @(
-    'upgrade',
+    'install',
     '--id', $WingetId,
     '-e',
+    '--scope', $scope,
     '--accept-source-agreements',
     '--accept-package-agreements',
     '--silent'
@@ -130,7 +131,7 @@ $code = $LASTEXITCODE
 
 if ($code -eq 0) {
     $after = Get-AppInstallState
-    Write-Log INFO "Update completed (version: $($after.Version))."
+    Write-Log INFO "Install completed (version: $($after.Version))."
 } else {
     Write-Log ERROR "winget exited with code $code. Review the output above for the cause."
 }

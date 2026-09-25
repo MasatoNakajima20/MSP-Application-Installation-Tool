@@ -2,10 +2,10 @@
 
 <#
 .SYNOPSIS
-    Updates Claude AI to the latest version via winget.
+    Uninstalls VLC Media Player via winget.
 .DESCRIPTION
-    Compares installed and latest-available versions via winget. If an update is
-    available, runs winget upgrade. Exits cleanly if not installed or up to date.
+    Detects current state via winget (no registry checks). If VLC Media Player is
+    installed, prompts to confirm and then runs winget uninstall.
 .NOTES
     Part of MSP Application Installation Tool.
     Repo: https://github.com/MasatoNakajima20/MSP-Application-Installation-Tool
@@ -16,9 +16,9 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------------------------
-$AppName  = 'Claude AI'
-$WingetId = 'Anthropic.Claude'
-$TaskName = 'Upgrade-ClaudeAI'
+$AppName  = 'VLC Media Player'
+$WingetId = 'VideoLAN.VLC'
+$TaskName = 'Uninstall-VLC'
 
 $LogDir = 'C:\Logging\MSP Application Installation Tool'
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
@@ -105,24 +105,25 @@ Write-Log INFO "Checking current install state ..."
 $state = Get-AppInstallState
 
 if (-not $state.Installed) {
-    Write-Log WARN "$AppName is not installed. Use the Install module first."
+    Write-Log INFO "$AppName is not installed. Nothing to do."
     Read-Host "`nPress Enter to close"
     exit 0
 }
 
-if (-not $state.Available) {
-    Write-Log INFO "$AppName is already up to date (version: $($state.Version))."
+Write-Log INFO "$AppName is installed (version: $($state.Version))."
+$confirm = Read-Host "Proceed with uninstall of $AppName? (Y/N)"
+if ($confirm -notmatch '^(?i)y(es)?$') {
+    Write-Log WARN "Cancelled by user. No changes made."
     Read-Host "`nPress Enter to close"
     exit 0
 }
 
-Write-Log INFO "Update available: $($state.Version) -> $($state.Available). Upgrading $AppName via winget ..."
+Write-Log INFO "Uninstalling $AppName via winget ..."
 $wingetArgs = @(
-    'upgrade',
+    'uninstall',
     '--id', $WingetId,
     '-e',
     '--accept-source-agreements',
-    '--accept-package-agreements',
     '--silent'
 )
 & winget @wingetArgs
@@ -130,7 +131,11 @@ $code = $LASTEXITCODE
 
 if ($code -eq 0) {
     $after = Get-AppInstallState
-    Write-Log INFO "Update completed (version: $($after.Version))."
+    if ($after.Installed) {
+        Write-Log WARN "winget reported success but $AppName still appears present. A reboot or per-profile copies may remain."
+    } else {
+        Write-Log INFO "Uninstall completed."
+    }
 } else {
     Write-Log ERROR "winget exited with code $code. Review the output above for the cause."
 }

@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-    Updates Claude AI to the latest version via winget.
+    Updates 7-Zip to the latest version via winget.
 .DESCRIPTION
     Compares installed and latest-available versions via winget. If an update is
     available, runs winget upgrade. Exits cleanly if not installed or up to date.
@@ -16,9 +16,9 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------------------------
-$AppName  = 'Claude AI'
-$WingetId = 'Anthropic.Claude'
-$TaskName = 'Upgrade-ClaudeAI'
+$AppName  = '7-Zip'
+$WingetId = '7zip.7zip'
+$TaskName = 'Upgrade-7Zip'
 
 $LogDir = 'C:\Logging\MSP Application Installation Tool'
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
