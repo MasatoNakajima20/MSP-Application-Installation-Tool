@@ -5,10 +5,11 @@
     MSP Application Installation Tool - GUI launcher.
 
 .DESCRIPTION
-    Single-file WinForms launcher. Lists applications that can be installed
-    via winget. Each app card shows current install state and offers Install
-    or Uninstall, which downloads the matching module from GitHub on demand
-    and runs it in its own PowerShell window.
+    Single-file WinForms launcher. Lists supported applications grouped by
+    category (Browsers / Productivity / Media). Each app card shows current
+    install state and offers Install, Uninstall, or Update, which downloads the
+    matching module from GitHub on demand and runs it in its own PowerShell
+    window. Detection is winget-only (no registry checks).
 
 .EXAMPLE
     # Run on any Windows machine - no local clone needed:
@@ -21,18 +22,37 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# ---------------------------------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------------------------------
 $script:RepoOwner  = 'MasatoNakajima20'
 $script:RepoName   = 'MSP-Application-Installation-Tool'
 $script:Branch     = 'main'
-$script:Version    = '0.2.0-beta'
+$script:Version    = '0.3.0-beta'
+$script:TaskName   = 'Launch-MSPAppInstaller'
 $script:BaseRawUrl = "https://raw.githubusercontent.com/$script:RepoOwner/$script:RepoName/$script:Branch"
+
+# winget module-download cache (a cache, not a log): stays under %LocalAppData%\Temp\AIT.
 $script:WorkDir    = Join-Path $env:USERPROFILE 'AppData\Local\Temp\AIT'
 
-# Application catalog. Add a new entry per application supported.
+# Logs go to C:\Logging\<Project>\ per the project standard.
+$script:LogDir     = 'C:\Logging\MSP Application Installation Tool'
+if (-not (Test-Path $script:LogDir)) { New-Item -ItemType Directory -Path $script:LogDir -Force | Out-Null }
+$script:LogFile    = Join-Path $script:LogDir ("{0}_{1}_{2}.log" -f $env:COMPUTERNAME, (Get-Date).ToString('yyyyMMdd_HHmmss'), $script:TaskName)
+
+# Category display order for the grouped list.
+$script:Categories = @('Browsers', 'Productivity', 'Utilities', 'Media')
+
+# ---------------------------------------------------------------------------
+# APPLICATION CATALOG
+# ---------------------------------------------------------------------------
+# Add a new entry per application. Each app is backed by three modules
+# (Install-/Uninstall-/Upgrade-<Suffix>.ps1) and belongs to one Category.
 $script:Apps = @(
     [PSCustomObject]@{
         Name           = 'Google Chrome'
         Publisher      = 'Google'
+        Category       = 'Browsers'
         WingetId       = 'Google.Chrome'
         Description    = "Google's web browser. Silent install via winget."
         InstallModule  = 'Modules/Install-GoogleChrome.ps1'
@@ -40,8 +60,19 @@ $script:Apps = @(
         UpgradeModule  = 'Modules/Upgrade-GoogleChrome.ps1'
     }
     [PSCustomObject]@{
+        Name           = 'Mozilla Firefox'
+        Publisher      = 'Mozilla'
+        Category       = 'Browsers'
+        WingetId       = 'Mozilla.Firefox'
+        Description    = "Mozilla Firefox web browser. Silent install via winget."
+        InstallModule  = 'Modules/Install-MozillaFirefox.ps1'
+        UninstallModule= 'Modules/Uninstall-MozillaFirefox.ps1'
+        UpgradeModule  = 'Modules/Upgrade-MozillaFirefox.ps1'
+    }
+    [PSCustomObject]@{
         Name           = 'Microsoft Teams'
         Publisher      = 'Microsoft'
+        Category       = 'Productivity'
         WingetId       = 'Microsoft.Teams'
         Description    = "Microsoft Teams desktop client. Silent install via winget."
         InstallModule  = 'Modules/Install-MicrosoftTeams.ps1'
@@ -49,8 +80,19 @@ $script:Apps = @(
         UpgradeModule  = 'Modules/Upgrade-MicrosoftTeams.ps1'
     }
     [PSCustomObject]@{
+        Name           = 'Microsoft Office'
+        Publisher      = 'Microsoft'
+        Category       = 'Productivity'
+        WingetId       = 'Microsoft.Office'
+        Description    = "Microsoft 365 Apps (Office). Requires admin; self-updates."
+        InstallModule  = 'Modules/Install-MicrosoftOffice.ps1'
+        UninstallModule= 'Modules/Uninstall-MicrosoftOffice.ps1'
+        UpgradeModule  = 'Modules/Upgrade-MicrosoftOffice.ps1'
+    }
+    [PSCustomObject]@{
         Name           = 'Claude AI'
         Publisher      = 'Anthropic'
+        Category       = 'Productivity'
         WingetId       = 'Anthropic.Claude'
         Description    = "Anthropic's Claude desktop app. Silent install via winget."
         InstallModule  = 'Modules/Install-ClaudeAI.ps1'
@@ -60,15 +102,48 @@ $script:Apps = @(
     [PSCustomObject]@{
         Name           = 'Adobe Acrobat Reader'
         Publisher      = 'Adobe'
+        Category       = 'Productivity'
         WingetId       = 'Adobe.Acrobat.Reader.64-bit'
         Description    = "Adobe Acrobat Reader (64-bit). Silent install via winget."
         InstallModule  = 'Modules/Install-AdobeReader.ps1'
         UninstallModule= 'Modules/Uninstall-AdobeReader.ps1'
         UpgradeModule  = 'Modules/Upgrade-AdobeReader.ps1'
     }
+    [PSCustomObject]@{
+        Name           = '7-Zip'
+        Publisher      = 'Igor Pavlov'
+        Category       = 'Utilities'
+        WingetId       = '7zip.7zip'
+        Description    = "7-Zip file archiver / extractor. Silent install via winget."
+        InstallModule  = 'Modules/Install-7Zip.ps1'
+        UninstallModule= 'Modules/Uninstall-7Zip.ps1'
+        UpgradeModule  = 'Modules/Upgrade-7Zip.ps1'
+    }
+    [PSCustomObject]@{
+        Name           = 'Microsoft PowerToys'
+        Publisher      = 'Microsoft'
+        Category       = 'Utilities'
+        WingetId       = 'Microsoft.PowerToys'
+        Description    = "Microsoft PowerToys - Windows power-user utilities. Silent install via winget."
+        InstallModule  = 'Modules/Install-PowerToys.ps1'
+        UninstallModule= 'Modules/Uninstall-PowerToys.ps1'
+        UpgradeModule  = 'Modules/Upgrade-PowerToys.ps1'
+    }
+    [PSCustomObject]@{
+        Name           = 'VLC Media Player'
+        Publisher      = 'VideoLAN'
+        Category       = 'Media'
+        WingetId       = 'VideoLAN.VLC'
+        Description    = "VLC media player. Silent install via winget."
+        InstallModule  = 'Modules/Install-VLC.ps1'
+        UninstallModule= 'Modules/Uninstall-VLC.ps1'
+        UpgradeModule  = 'Modules/Upgrade-VLC.ps1'
+    }
 )
 
-# Brand palette
+# ---------------------------------------------------------------------------
+# BRAND PALETTE
+# ---------------------------------------------------------------------------
 $BrandBlue       = [System.Drawing.ColorTranslator]::FromHtml('#008BC7')
 $BrandBlueDark   = [System.Drawing.ColorTranslator]::FromHtml('#00577E')
 $BrandBlueLight  = [System.Drawing.ColorTranslator]::FromHtml('#E6F4FA')
@@ -77,16 +152,49 @@ $BrandTextMuted  = [System.Drawing.ColorTranslator]::FromHtml('#999999')
 $BrandGreen      = [System.Drawing.ColorTranslator]::FromHtml('#28A745')
 $BrandRed        = [System.Drawing.ColorTranslator]::FromHtml('#C0392B')
 
+# ---------------------------------------------------------------------------
+# FUNCTIONS
+# ---------------------------------------------------------------------------
+
+# Writes a timestamped INFO/WARN/ERROR entry to both the console and the log file.
+function Write-Log {
+    param(
+        [ValidateSet('INFO','WARN','ERROR')][string]$Level = 'INFO',
+        [Parameter(Mandatory)][string]$Message
+    )
+    $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $line = "$ts [$Level] $Message"
+    switch ($Level) {
+        'WARN'  { Write-Host $line -ForegroundColor Yellow }
+        'ERROR' { Write-Host $line -ForegroundColor Red }
+        default { Write-Host $line -ForegroundColor Gray }
+    }
+    try { Add-Content -Path $script:LogFile -Value $line -Encoding UTF8 } catch { }
+}
+
+# Prints the cyan banner block identifying this tool when run interactively.
+function Show-Banner {
+    Write-Host ''
+    Write-Host '============================================================' -ForegroundColor Cyan
+    Write-Host ' MSP Application Installation Tool' -ForegroundColor Cyan
+    Write-Host " Task: $script:TaskName   Version: $script:Version" -ForegroundColor Cyan
+    Write-Host '============================================================' -ForegroundColor Cyan
+    Write-Host ''
+}
+
+# Ensures the winget module-download cache directory exists.
 function Ensure-WorkDir {
     if (-not (Test-Path $script:WorkDir)) {
         New-Item -ItemType Directory -Path $script:WorkDir -Force | Out-Null
     }
 }
 
+# Returns $true when the winget CLI is available on this machine.
 function Test-WingetAvailable {
     return [bool](Get-Command winget -ErrorAction SilentlyContinue)
 }
 
+# Returns the installed winget version string, or $null when winget is missing.
 function Get-WingetVersion {
     if (-not (Test-WingetAvailable)) { return $null }
     try {
@@ -96,12 +204,11 @@ function Get-WingetVersion {
     return $null
 }
 
+# Detects install state for a package (winget-only). Returns Installed, Version
+# (installed) and Available (newer version, present only when an upgrade exists).
 function Test-AppInstalled {
     param([string]$WingetId)
 
-    # Detection is winget-only - no registry checks. Catches every install type
-    # winget tracks, including Squirrel / MSIX apps (e.g. Claude) that write no
-    # classic uninstall key.
     if ($WingetId -and (Test-WingetAvailable)) {
         try {
             $out = winget list --id $WingetId -e --accept-source-agreements 2>$null
@@ -109,7 +216,6 @@ function Test-AppInstalled {
                 $line = $out | Where-Object { $_ -match [regex]::Escape($WingetId) } | Select-Object -First 1
                 if ($line) {
                     # Tokens after the package ID are: <installed> [<available>] <source>.
-                    # The available version is present only when an upgrade exists.
                     $idx    = $line.IndexOf($WingetId)
                     $rest   = $line.Substring($idx + $WingetId.Length).Trim()
                     $tokens = $rest -split '\s+'
@@ -126,6 +232,8 @@ function Test-AppInstalled {
     return [PSCustomObject]@{ Installed = $false; Version = $null; Available = $null }
 }
 
+# Downloads a module from the repo into the cache and launches it in its own
+# PowerShell window so the module's interactive prompts work normally.
 function Invoke-RemoteModule {
     param([string]$ModuleFile, [System.Windows.Forms.Label]$StatusLabel)
 
@@ -136,10 +244,12 @@ function Invoke-RemoteModule {
 
     $StatusLabel.Text = "Downloading $leaf ..."
     $StatusLabel.Refresh()
+    Write-Log INFO "Downloading module: $url"
 
     try {
         Invoke-WebRequest -Uri $url -OutFile $localPath -UseBasicParsing -ErrorAction Stop
     } catch {
+        Write-Log ERROR "Download failed for ${url}: $($_.Exception.Message)"
         [System.Windows.Forms.MessageBox]::Show(
             "Could not download module from:`n$url`n`n$($_.Exception.Message)",
             'Download Error',
@@ -157,7 +267,9 @@ function Invoke-RemoteModule {
             '-File', $localPath
         ) | Out-Null
         $StatusLabel.Text = "Launched: $leaf"
+        Write-Log INFO "Launched module: $leaf"
     } catch {
+        Write-Log ERROR "Launch failed for ${leaf}: $($_.Exception.Message)"
         [System.Windows.Forms.MessageBox]::Show(
             "Could not launch $psExe.`n`n$($_.Exception.Message)",
             'Launch Error',
@@ -167,6 +279,7 @@ function Invoke-RemoteModule {
     }
 }
 
+# Shows the modal About dialog with repo and release links.
 function Show-AboutDialog {
     $about               = New-Object System.Windows.Forms.Form
     $about.Text          = 'About MSP Application Installation Tool'
@@ -203,7 +316,7 @@ function Show-AboutDialog {
     $hdr.Controls.Add($hdrVer)
 
     $descLbl          = New-Object System.Windows.Forms.Label
-    $descLbl.Text     = "GUI launcher for installing and removing applications via winget. Fetches each module from GitHub on demand and runs it in its own PowerShell window."
+    $descLbl.Text     = "GUI launcher for installing, removing, and updating applications via winget. Fetches each module from GitHub on demand and runs it in its own PowerShell window."
     $descLbl.Font     = New-Object System.Drawing.Font('Segoe UI', 9)
     $descLbl.ForeColor= $BrandTextDark
     $descLbl.Location = New-Object System.Drawing.Point(20, 76)
@@ -265,10 +378,12 @@ function Show-AboutDialog {
     $about.Dispose()
 }
 
-# ----- form -----
+# ---------------------------------------------------------------------------
+# FORM
+# ---------------------------------------------------------------------------
 $form               = New-Object System.Windows.Forms.Form
 $form.Text          = "MSP Application Installation Tool  -  $script:Version"
-$form.Size          = New-Object System.Drawing.Size(1100, 660)
+$form.Size          = New-Object System.Drawing.Size(1100, 780)
 $form.AutoScaleMode = 'Dpi'
 $form.StartPosition = 'CenterScreen'
 $form.BackColor     = [System.Drawing.Color]::White
@@ -293,18 +408,20 @@ $titleLbl.BackColor= [System.Drawing.Color]::Transparent
 $header.Controls.Add($titleLbl)
 
 $subLbl          = New-Object System.Windows.Forms.Label
-$subLbl.Text     = 'Install or remove supported applications via winget. Each action opens in its own PowerShell window.'
+$subLbl.Text     = 'Install, remove, or update supported applications via winget. Each action opens in its own PowerShell window.'
 $subLbl.Font     = New-Object System.Drawing.Font('Segoe UI', 9)
 $subLbl.ForeColor= [System.Drawing.Color]::White
 $subLbl.Location = New-Object System.Drawing.Point(22, 42)
-$subLbl.Size     = New-Object System.Drawing.Size(800, 20)
+$subLbl.Size     = New-Object System.Drawing.Size(900, 20)
 $subLbl.BackColor= [System.Drawing.Color]::Transparent
 $header.Controls.Add($subLbl)
 
 # Forward-declare for closures
 $statusLbl = New-Object System.Windows.Forms.Label
 
-# ----- prerequisite status banner -----
+# ---------------------------------------------------------------------------
+# PREREQUISITE BANNER
+# ---------------------------------------------------------------------------
 $wingetVer = Get-WingetVersion
 $wingetOk  = [bool]$wingetVer
 
@@ -344,16 +461,41 @@ $pillDet.Size          = New-Object System.Drawing.Size(820, 28)
 $pillDet.TextAlign     = 'MiddleLeft'
 $pill.Controls.Add($pillDet)
 
-# ----- application list -----
+# ---------------------------------------------------------------------------
+# APPLICATION LIST
+# ---------------------------------------------------------------------------
 $list                 = New-Object System.Windows.Forms.FlowLayoutPanel
 $list.Location        = New-Object System.Drawing.Point(15, 130)
-$list.Size            = New-Object System.Drawing.Size(1065, 425)
+$list.Size            = New-Object System.Drawing.Size(1065, 545)
 $list.FlowDirection   = 'TopDown'
 $list.WrapContents    = $false
 $list.AutoScroll      = $true
 $list.BackColor       = [System.Drawing.Color]::White
 $form.Controls.Add($list)
 
+# Builds a full-width category section header band for the grouped list.
+function New-CategoryHeader {
+    param ([string]$Title, [int]$Count)
+
+    $hdr           = New-Object System.Windows.Forms.Panel
+    $hdr.Size      = New-Object System.Drawing.Size(1040, 30)
+    $hdr.Margin    = New-Object System.Windows.Forms.Padding(0, 6, 0, 4)
+    $hdr.BackColor = $BrandBlueDark
+
+    $hdrLbl           = New-Object System.Windows.Forms.Label
+    $hdrLbl.Text      = "$($Title.ToUpper())   ($Count)"
+    $hdrLbl.Font      = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+    $hdrLbl.ForeColor = [System.Drawing.Color]::White
+    $hdrLbl.BackColor = [System.Drawing.Color]::Transparent
+    $hdrLbl.Location  = New-Object System.Drawing.Point(12, 4)
+    $hdrLbl.Size      = New-Object System.Drawing.Size(1000, 22)
+    $hdrLbl.TextAlign = 'MiddleLeft'
+    $hdr.Controls.Add($hdrLbl)
+
+    return $hdr
+}
+
+# Builds one application card (status chip, version, update notice, action buttons).
 function New-AppCard {
     param ([PSCustomObject]$App, [System.Windows.Forms.Label]$StatusLabel)
 
@@ -382,7 +524,7 @@ function New-AppCard {
     $chipLbl.TextAlign = 'MiddleCenter'
     $chip.Controls.Add($chipLbl)
 
-    # Version (next to chip)
+    # Installed version (next to chip)
     $verLbl           = New-Object System.Windows.Forms.Label
     $verLbl.Text      = if ($state.Installed -and $state.Version) { "v$($state.Version)" } else { '' }
     $verLbl.Font      = New-Object System.Drawing.Font('Segoe UI', 8)
@@ -479,14 +621,26 @@ function New-AppCard {
     return $card
 }
 
-foreach ($app in $script:Apps) {
-    $card = New-AppCard -App $app -StatusLabel $statusLbl
-    $list.Controls.Add($card)
+# Rebuilds the list: for each category (in order), a header band then its cards.
+function Update-AppList {
+    $list.Controls.Clear()
+    foreach ($cat in $script:Categories) {
+        $inCat = @($script:Apps | Where-Object { $_.Category -eq $cat })
+        if ($inCat.Count -eq 0) { continue }
+        $list.Controls.Add((New-CategoryHeader -Title $cat -Count $inCat.Count))
+        foreach ($app in $inCat) {
+            $list.Controls.Add((New-AppCard -App $app -StatusLabel $statusLbl))
+        }
+    }
 }
 
-# ----- footer -----
+Update-AppList
+
+# ---------------------------------------------------------------------------
+# FOOTER
+# ---------------------------------------------------------------------------
 $statusLbl.Text      = 'Ready.'
-$statusLbl.Location  = New-Object System.Drawing.Point(18, 578)
+$statusLbl.Location  = New-Object System.Drawing.Point(18, 698)
 $statusLbl.Size      = New-Object System.Drawing.Size(580, 22)
 $statusLbl.TextAlign = 'MiddleLeft'
 $statusLbl.ForeColor = $BrandTextMuted
@@ -496,24 +650,21 @@ $form.Controls.Add($statusLbl)
 $refreshBtn           = New-Object System.Windows.Forms.Button
 $refreshBtn.Text      = 'Refresh'
 $refreshBtn.Size      = New-Object System.Drawing.Size(100, 32)
-$refreshBtn.Location  = New-Object System.Drawing.Point(610, 573)
+$refreshBtn.Location  = New-Object System.Drawing.Point(610, 693)
 $refreshBtn.FlatStyle = 'Flat'
 $refreshBtn.BackColor = [System.Drawing.Color]::White
 $refreshBtn.ForeColor = $BrandTextDark
 $refreshBtn.Add_Click({
-    $list.Controls.Clear()
-    foreach ($app in $script:Apps) {
-        $card = New-AppCard -App $app -StatusLabel $statusLbl
-        $list.Controls.Add($card)
-    }
+    Update-AppList
     $statusLbl.Text = 'State refreshed.'
+    Write-Log INFO 'App list refreshed.'
 })
 $form.Controls.Add($refreshBtn)
 
 $aboutBtn           = New-Object System.Windows.Forms.Button
 $aboutBtn.Text      = 'About'
 $aboutBtn.Size      = New-Object System.Drawing.Size(90, 32)
-$aboutBtn.Location  = New-Object System.Drawing.Point(720, 573)
+$aboutBtn.Location  = New-Object System.Drawing.Point(720, 693)
 $aboutBtn.FlatStyle = 'Flat'
 $aboutBtn.BackColor = [System.Drawing.Color]::White
 $aboutBtn.ForeColor = $BrandTextDark
@@ -523,12 +674,18 @@ $form.Controls.Add($aboutBtn)
 $closeBtn           = New-Object System.Windows.Forms.Button
 $closeBtn.Text      = 'Close'
 $closeBtn.Size      = New-Object System.Drawing.Size(90, 32)
-$closeBtn.Location  = New-Object System.Drawing.Point(980, 573)
+$closeBtn.Location  = New-Object System.Drawing.Point(980, 693)
 $closeBtn.FlatStyle = 'Flat'
 $closeBtn.BackColor = [System.Drawing.Color]::White
 $closeBtn.ForeColor = $BrandTextDark
 $closeBtn.Add_Click({ $form.Close() })
 $form.Controls.Add($closeBtn)
 
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
+Show-Banner
+Write-Log INFO "Launcher started (winget: $(if ($wingetOk) { "v$wingetVer" } else { 'missing' }))."
 [void]$form.ShowDialog()
 $form.Dispose()
+Write-Log INFO 'Launcher closed.'

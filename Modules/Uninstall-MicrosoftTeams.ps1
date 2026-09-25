@@ -3,11 +3,9 @@
 <#
 .SYNOPSIS
     Uninstalls Microsoft Teams via winget.
-
 .DESCRIPTION
-    Detects Microsoft Teams (registry uninstall keys + winget). If present,
-    prompts to confirm and then runs winget uninstall. If absent, exits cleanly.
-
+    Detects current state via winget (no registry checks). If Microsoft Teams is
+    installed, prompts to confirm and then runs winget uninstall.
 .NOTES
     Part of MSP Application Installation Tool.
     Repo: https://github.com/MasatoNakajima20/MSP-Application-Installation-Tool
@@ -15,92 +13,112 @@
 
 $ErrorActionPreference = 'Stop'
 
-$AppName     = 'Microsoft Teams'
-$WingetId    = 'Microsoft.Teams'
+# ---------------------------------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------------------------------
+$AppName  = 'Microsoft Teams'
+$WingetId = 'Microsoft.Teams'
+$TaskName = 'Uninstall-MicrosoftTeams'
 
-$AITDir = Join-Path $env:USERPROFILE 'AppData\Local\Temp\AIT'
-if (-not (Test-Path $AITDir)) {
-    New-Item -ItemType Directory -Path $AITDir -Force | Out-Null
+$LogDir = 'C:\Logging\MSP Application Installation Tool'
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
+$stamp   = (Get-Date).ToString('yyyyMMdd_HHmmss')
+$LogFile = Join-Path $LogDir "$($env:COMPUTERNAME)_${stamp}_$TaskName.log"
+
+# ---------------------------------------------------------------------------
+# FUNCTIONS
+# ---------------------------------------------------------------------------
+
+# Writes a timestamped INFO/WARN/ERROR entry to both the console and the log file.
+function Write-Log {
+    param(
+        [ValidateSet('INFO','WARN','ERROR')][string]$Level = 'INFO',
+        [Parameter(Mandatory)][string]$Message
+    )
+    $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $line = "$ts [$Level] $Message"
+    switch ($Level) {
+        'WARN'  { Write-Host $line -ForegroundColor Yellow }
+        'ERROR' { Write-Host $line -ForegroundColor Red }
+        default { Write-Host $line -ForegroundColor Gray }
+    }
+    try { Add-Content -Path $LogFile -Value $line -Encoding UTF8 } catch { }
 }
-$LogFile = Join-Path $AITDir ("Uninstall-MicrosoftTeams_{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
-try { Start-Transcript -Path $LogFile -Force | Out-Null } catch { }
 
-function Write-Header {
-    param([string]$Text)
+# Prints the cyan banner block identifying this task when run interactively.
+function Show-Banner {
     Write-Host ''
-    Write-Host ('=' * 60) -ForegroundColor Cyan
-    Write-Host " $Text" -ForegroundColor Cyan
-    Write-Host ('=' * 60) -ForegroundColor Cyan
+    Write-Host '============================================================' -ForegroundColor Cyan
+    Write-Host ' MSP Application Installation Tool' -ForegroundColor Cyan
+    Write-Host " Task: $TaskName" -ForegroundColor Cyan
+    Write-Host " App : $AppName ($WingetId)" -ForegroundColor Cyan
+    Write-Host '============================================================' -ForegroundColor Cyan
+    Write-Host ''
 }
 
+# Returns $true when the winget CLI is available on this machine.
 function Test-WingetAvailable {
     return [bool](Get-Command winget -ErrorAction SilentlyContinue)
 }
 
+# Queries winget (winget-only, no registry) for install state; returns
+# Installed, Version (installed), Available (newer, if any) and Source.
 function Get-AppInstallState {
-    # Detection is winget-only - no registry checks.
-    $state = [PSCustomObject]@{ Installed = $false; Version = $null; Source = $null }
-
+    $state = [PSCustomObject]@{ Installed = $false; Version = $null; Available = $null; Source = $null }
     if (Test-WingetAvailable) {
         try {
             $out = winget list --id $WingetId -e --accept-source-agreements 2>$null
             if ($LASTEXITCODE -eq 0) {
-                $line = $out | Where-Object { $_ -match [regex]::Escape($WingetId) } | Select-Object -First 1
-                if ($line) {
-                    $idx  = $line.IndexOf($WingetId)
-                    $rest = $line.Substring($idx + $WingetId.Length).Trim()
-                    $ver  = ($rest -split '\s+' | Select-Object -First 1)
+                $wLine = $out | Where-Object { $_ -match [regex]::Escape($WingetId) } | Select-Object -First 1
+                if ($wLine) {
+                    $idx    = $wLine.IndexOf($WingetId)
+                    $rest   = $wLine.Substring($idx + $WingetId.Length).Trim()
+                    $tokens = $rest -split '\s+'
+                    $ver    = $tokens[0]
                     if ($ver -notmatch '^[\d]') { $ver = $null }
+                    $avail = $null
+                    if ($tokens.Count -ge 2 -and $tokens[1] -match '^[\d]') { $avail = $tokens[1] }
                     $state.Installed = $true
                     $state.Version   = $ver
+                    $state.Available = $avail
                     $state.Source    = 'winget'
                 }
             }
         } catch { }
     }
-
     return $state
 }
 
-Write-Header "Uninstall: $AppName"
-Write-Host "Log file: $LogFile" -ForegroundColor DarkGray
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
+Show-Banner
+Write-Log INFO "Log file: $LogFile"
 
 if (-not (Test-WingetAvailable)) {
-    Write-Host "winget is not available on this machine." -ForegroundColor Red
-    Write-Host "Install 'App Installer' from the Microsoft Store, or upgrade Windows, then try again." -ForegroundColor Yellow
-    try { Stop-Transcript | Out-Null } catch { }
+    Write-Log ERROR "winget is not available. Install 'App Installer' from the Microsoft Store, or upgrade Windows, then retry."
     Read-Host "`nPress Enter to close"
     exit 1
 }
 
-Write-Host "Checking current install state ..." -ForegroundColor Gray
+Write-Log INFO "Checking current install state ..."
 $state = Get-AppInstallState
 
 if (-not $state.Installed) {
-    Write-Host ''
-    Write-Host "$AppName is not installed. Nothing to do." -ForegroundColor Yellow
-    try { Stop-Transcript | Out-Null } catch { }
+    Write-Log INFO "$AppName is not installed. Nothing to do."
     Read-Host "`nPress Enter to close"
     exit 0
 }
 
-Write-Host ''
-Write-Host "$AppName is currently installed." -ForegroundColor Green
-if ($state.Version) { Write-Host "  Version : $($state.Version)" -ForegroundColor Gray }
-Write-Host "  Source  : $($state.Source)" -ForegroundColor Gray
-Write-Host ''
-
-$confirm = Read-Host "Proceed with uninstall? (Y/N)"
+Write-Log INFO "$AppName is installed (version: $($state.Version))."
+$confirm = Read-Host "Proceed with uninstall of $AppName? (Y/N)"
 if ($confirm -notmatch '^(?i)y(es)?$') {
-    Write-Host "Cancelled. No changes made." -ForegroundColor Yellow
-    try { Stop-Transcript | Out-Null } catch { }
+    Write-Log WARN "Cancelled by user. No changes made."
     Read-Host "`nPress Enter to close"
     exit 0
 }
 
-Write-Host ''
-Write-Host "Uninstalling $AppName via winget ..." -ForegroundColor Cyan
-
+Write-Log INFO "Uninstalling $AppName via winget ..."
 $wingetArgs = @(
     'uninstall',
     '--id', $WingetId,
@@ -108,25 +126,19 @@ $wingetArgs = @(
     '--accept-source-agreements',
     '--silent'
 )
-
 & winget @wingetArgs
 $code = $LASTEXITCODE
 
-Write-Host ''
 if ($code -eq 0) {
     $after = Get-AppInstallState
     if ($after.Installed) {
-        Write-Host "winget reported success but $AppName still appears to be present." -ForegroundColor Yellow
-        Write-Host "It may require an additional reboot, or per-user copies may remain on other profiles." -ForegroundColor Yellow
+        Write-Log WARN "winget reported success but $AppName still appears present. A reboot or per-profile copies may remain."
     } else {
-        Write-Host "Uninstall completed." -ForegroundColor Green
+        Write-Log INFO "Uninstall completed."
     }
 } else {
-    Write-Host "winget exited with code $code." -ForegroundColor Red
-    Write-Host "Review the output above for the cause." -ForegroundColor Yellow
+    Write-Log ERROR "winget exited with code $code. Review the output above for the cause."
 }
 
-Write-Host ''
-Write-Host "Log saved to: $LogFile" -ForegroundColor DarkGray
-try { Stop-Transcript | Out-Null } catch { }
+Write-Log INFO "Done. Log saved to: $LogFile"
 Read-Host "`nPress Enter to close"

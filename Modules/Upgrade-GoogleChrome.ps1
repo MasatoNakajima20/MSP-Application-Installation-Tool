@@ -3,12 +3,9 @@
 <#
 .SYNOPSIS
     Updates Google Chrome to the latest version via winget.
-
 .DESCRIPTION
-    Checks the installed and latest-available versions via winget. If an update
-    is available, runs winget upgrade. If the app is not installed, or already
-    up to date, it exits without action.
-
+    Compares installed and latest-available versions via winget. If an update is
+    available, runs winget upgrade. Exits cleanly if not installed or up to date.
 .NOTES
     Part of MSP Application Installation Tool.
     Repo: https://github.com/MasatoNakajima20/MSP-Application-Installation-Tool
@@ -16,40 +13,66 @@
 
 $ErrorActionPreference = 'Stop'
 
+# ---------------------------------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------------------------------
 $AppName  = 'Google Chrome'
 $WingetId = 'Google.Chrome'
+$TaskName = 'Upgrade-GoogleChrome'
 
-$AITDir = Join-Path $env:USERPROFILE 'AppData\Local\Temp\AIT'
-if (-not (Test-Path $AITDir)) {
-    New-Item -ItemType Directory -Path $AITDir -Force | Out-Null
+$LogDir = 'C:\Logging\MSP Application Installation Tool'
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
+$stamp   = (Get-Date).ToString('yyyyMMdd_HHmmss')
+$LogFile = Join-Path $LogDir "$($env:COMPUTERNAME)_${stamp}_$TaskName.log"
+
+# ---------------------------------------------------------------------------
+# FUNCTIONS
+# ---------------------------------------------------------------------------
+
+# Writes a timestamped INFO/WARN/ERROR entry to both the console and the log file.
+function Write-Log {
+    param(
+        [ValidateSet('INFO','WARN','ERROR')][string]$Level = 'INFO',
+        [Parameter(Mandatory)][string]$Message
+    )
+    $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $line = "$ts [$Level] $Message"
+    switch ($Level) {
+        'WARN'  { Write-Host $line -ForegroundColor Yellow }
+        'ERROR' { Write-Host $line -ForegroundColor Red }
+        default { Write-Host $line -ForegroundColor Gray }
+    }
+    try { Add-Content -Path $LogFile -Value $line -Encoding UTF8 } catch { }
 }
-$LogFile = Join-Path $AITDir ("Upgrade-GoogleChrome_{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
-try { Start-Transcript -Path $LogFile -Force | Out-Null } catch { }
 
-function Write-Header {
-    param([string]$Text)
+# Prints the cyan banner block identifying this task when run interactively.
+function Show-Banner {
     Write-Host ''
-    Write-Host ('=' * 60) -ForegroundColor Cyan
-    Write-Host " $Text" -ForegroundColor Cyan
-    Write-Host ('=' * 60) -ForegroundColor Cyan
+    Write-Host '============================================================' -ForegroundColor Cyan
+    Write-Host ' MSP Application Installation Tool' -ForegroundColor Cyan
+    Write-Host " Task: $TaskName" -ForegroundColor Cyan
+    Write-Host " App : $AppName ($WingetId)" -ForegroundColor Cyan
+    Write-Host '============================================================' -ForegroundColor Cyan
+    Write-Host ''
 }
 
+# Returns $true when the winget CLI is available on this machine.
 function Test-WingetAvailable {
     return [bool](Get-Command winget -ErrorAction SilentlyContinue)
 }
 
+# Queries winget (winget-only, no registry) for install state; returns
+# Installed, Version (installed), Available (newer, if any) and Source.
 function Get-AppInstallState {
-    # winget-only: Installed, Version (installed), Available (newer), Source
     $state = [PSCustomObject]@{ Installed = $false; Version = $null; Available = $null; Source = $null }
-
     if (Test-WingetAvailable) {
         try {
             $out = winget list --id $WingetId -e --accept-source-agreements 2>$null
             if ($LASTEXITCODE -eq 0) {
-                $line = $out | Where-Object { $_ -match [regex]::Escape($WingetId) } | Select-Object -First 1
-                if ($line) {
-                    $idx    = $line.IndexOf($WingetId)
-                    $rest   = $line.Substring($idx + $WingetId.Length).Trim()
+                $wLine = $out | Where-Object { $_ -match [regex]::Escape($WingetId) } | Select-Object -First 1
+                if ($wLine) {
+                    $idx    = $wLine.IndexOf($WingetId)
+                    $rest   = $wLine.Substring($idx + $WingetId.Length).Trim()
                     $tokens = $rest -split '\s+'
                     $ver    = $tokens[0]
                     if ($ver -notmatch '^[\d]') { $ver = $null }
@@ -63,48 +86,37 @@ function Get-AppInstallState {
             }
         } catch { }
     }
-
     return $state
 }
 
-Write-Header "Update: $AppName"
-Write-Host "Log file: $LogFile" -ForegroundColor DarkGray
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
+Show-Banner
+Write-Log INFO "Log file: $LogFile"
 
 if (-not (Test-WingetAvailable)) {
-    Write-Host "winget is not available on this machine." -ForegroundColor Red
-    Write-Host "Install 'App Installer' from the Microsoft Store, or upgrade Windows, then try again." -ForegroundColor Yellow
-    try { Stop-Transcript | Out-Null } catch { }
+    Write-Log ERROR "winget is not available. Install 'App Installer' from the Microsoft Store, or upgrade Windows, then retry."
     Read-Host "`nPress Enter to close"
     exit 1
 }
 
-Write-Host "Checking current install state ..." -ForegroundColor Gray
+Write-Log INFO "Checking current install state ..."
 $state = Get-AppInstallState
 
 if (-not $state.Installed) {
-    Write-Host ''
-    Write-Host "$AppName is not installed. Use the Install module first." -ForegroundColor Yellow
-    try { Stop-Transcript | Out-Null } catch { }
+    Write-Log WARN "$AppName is not installed. Use the Install module first."
     Read-Host "`nPress Enter to close"
     exit 0
 }
 
 if (-not $state.Available) {
-    Write-Host ''
-    Write-Host "$AppName is already up to date." -ForegroundColor Green
-    if ($state.Version) { Write-Host "  Installed version: $($state.Version)" -ForegroundColor Gray }
-    try { Stop-Transcript | Out-Null } catch { }
+    Write-Log INFO "$AppName is already up to date (version: $($state.Version))."
     Read-Host "`nPress Enter to close"
     exit 0
 }
 
-Write-Host ''
-Write-Host "$AppName update available." -ForegroundColor Cyan
-Write-Host "  Installed : $($state.Version)" -ForegroundColor Gray
-Write-Host "  Available : $($state.Available)" -ForegroundColor Gray
-Write-Host ''
-Write-Host "Updating $AppName via winget ..." -ForegroundColor Cyan
-
+Write-Log INFO "Update available: $($state.Version) -> $($state.Available). Upgrading $AppName via winget ..."
 $wingetArgs = @(
     'upgrade',
     '--id', $WingetId,
@@ -113,21 +125,15 @@ $wingetArgs = @(
     '--accept-package-agreements',
     '--silent'
 )
-
 & winget @wingetArgs
 $code = $LASTEXITCODE
 
-Write-Host ''
 if ($code -eq 0) {
     $after = Get-AppInstallState
-    Write-Host "Update completed." -ForegroundColor Green
-    if ($after.Version) { Write-Host "  Installed version: $($after.Version)" -ForegroundColor Gray }
+    Write-Log INFO "Update completed (version: $($after.Version))."
 } else {
-    Write-Host "winget exited with code $code." -ForegroundColor Red
-    Write-Host "Review the output above for the cause." -ForegroundColor Yellow
+    Write-Log ERROR "winget exited with code $code. Review the output above for the cause."
 }
 
-Write-Host ''
-Write-Host "Log saved to: $LogFile" -ForegroundColor DarkGray
-try { Stop-Transcript | Out-Null } catch { }
+Write-Log INFO "Done. Log saved to: $LogFile"
 Read-Host "`nPress Enter to close"

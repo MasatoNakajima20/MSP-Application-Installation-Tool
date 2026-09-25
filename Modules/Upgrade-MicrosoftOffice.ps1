@@ -2,10 +2,11 @@
 
 <#
 .SYNOPSIS
-    Updates Claude AI to the latest version via winget.
+    Updates Microsoft Office to the latest version via winget.
 .DESCRIPTION
     Compares installed and latest-available versions via winget. If an update is
     available, runs winget upgrade. Exits cleanly if not installed or up to date.
+    Note: Office (Microsoft 365 Apps) is Click-to-Run and self-manages updates; winget may report no update even when Office updates via its own channel. Installing or removing Office requires administrator rights.
 .NOTES
     Part of MSP Application Installation Tool.
     Repo: https://github.com/MasatoNakajima20/MSP-Application-Installation-Tool
@@ -16,9 +17,9 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------------------------
-$AppName  = 'Claude AI'
-$WingetId = 'Anthropic.Claude'
-$TaskName = 'Upgrade-ClaudeAI'
+$AppName  = 'Microsoft Office'
+$WingetId = 'Microsoft.Office'
+$TaskName = 'Upgrade-MicrosoftOffice'
 
 $LogDir = 'C:\Logging\MSP Application Installation Tool'
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
